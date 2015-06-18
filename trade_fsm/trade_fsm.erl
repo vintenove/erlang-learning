@@ -99,3 +99,33 @@ notifify_cancel(OtherPid) ->
 
 init(Name) ->
 	{ok, idle, #state{name=Name}}.
+
+
+%% Send players notice. Outtputing to the shell is enough for now
+notice(#state{name=N}, Str, Args) ->
+	io:format("~s: "++Str++"~n", [N|Args]).
+
+%% Allows to log unexpected messages
+unexpected(Msg, State) ->
+	io:format("~p received an unexpected message while in state ~p~n", [self(), Msg, State]).
+
+%% Asynchronous idle callbacks. This callback has to do with the other FSM
+%% since the client connects synchronously.
+idle({ask_negotiate, OtherPid}, S=#state{}) ->
+	Ref = monitor(process, OtherPid),
+	notice(S, "~p asked for a trade negotiation", [OtherPid]),
+	{next_state, idle_wait, S#state{other=OtherPid, monitor=Ref}};
+
+idle(Event, Data) ->
+	unexpected(Event, idle),
+	{next_state, idle, data}.
+
+%% idle synchonous callbacks
+idle(ask_negotiate, OtherPid}, From, S#state={}) ->
+	ask_negotiate(OtherPid, self()),
+	notice(S, "asking user ˜ p for a trade", [OtherPid]),
+	Ref = monitor(process, OtherPid),
+	{next_state, idle_wait, S#state{other=OtherPid, from=From, monitor=Ref}};
+
+idle(Event, _From, Data) ->
+	idle(Event, Data).
