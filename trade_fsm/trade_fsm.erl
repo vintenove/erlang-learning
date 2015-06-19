@@ -109,6 +109,9 @@ notice(#state{name=N}, Str, Args) ->
 unexpected(Msg, State) ->
 	io:format("~p received an unexpected message while in state ~p~n", [self(), Msg, State]).
 
+
+%% IDLE STATE
+
 %% Asynchronous idle callbacks. This callback has to do with the other FSM
 %% since the client connects synchronously.
 idle({ask_negotiate, OtherPid}, S=#state{}) ->
@@ -129,3 +132,31 @@ idle(ask_negotiate, OtherPid}, From, S#state={}) ->
 
 idle(Event, _From, Data) ->
 	idle(Event, Data).
+
+%% IDLE_WAIT STATE
+
+%% Race condition, this happens if other FSM ask ours at the same time
+idle_wait({ask_negotiate, OtherPid}, S=#state{other=OtherPid}) ->
+	gen_fsm:reply(S#state.from, ok),
+	notice(S, "starting negotiation", []),
+	{next_state, negotiate, S};
+
+%% The other FMS accepted our offer and we move to negotiate state
+idle_wait({accept_negotiate, OtherPid}, OtherPid, S#state(other=OtherPid)) ->
+	gen_fsm:reply(S#state.from, ok),
+	notice(S, "starting negotiation", []),
+	{next_state, negotiate, S};
+
+idle_wait(Event, Data) ->
+	unexpected(Event, idle_wait),
+	{next_state, idle_wait, Data}.
+
+%% Client can accept or dismiss trade
+idle_wait(accept_negotiate, _From, S#state(other=OtherPid)) ->
+	accept_negotiate(OtherPid, self()),
+	notice(S, "accepting negotiation", []),
+	{reply, ok, negotiate, S};
+
+idle_wait(Event, _From, Data) ->
+	unexpected(Event, idle_wait),
+	{next_state, idle_wait, Data}.
