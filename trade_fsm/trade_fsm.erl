@@ -100,6 +100,7 @@ notifify_cancel(OtherPid) ->
 init(Name) ->
 	{ok, idle, #state{name=Name}}.
 
+%% UTILS
 
 %% Send players notice. Outtputing to the shell is enough for now
 notice(#state{name=N}, Str, Args) ->
@@ -109,6 +110,12 @@ notice(#state{name=N}, Str, Args) ->
 unexpected(Msg, State) ->
 	io:format("~p received an unexpected message while in state ~p~n", [self(), Msg, State]).
 
+%% Adds item to an item list
+add(Item, L) ->
+	[Item|L].
+
+remove(Item, L) ->
+	L -- [Item].
 
 %% IDLE STATE
 
@@ -160,3 +167,50 @@ idle_wait(accept_negotiate, _From, S#state(other=OtherPid)) ->
 idle_wait(Event, _From, Data) ->
 	unexpected(Event, idle_wait),
 	{next_state, idle_wait, Data}.
+
+%% NEGOTIATE STATE
+
+%% Own side offering items
+negotiate({make_offer, Item}, S=#state{ownItems=OwnItems}) ->
+	do_offer(S#state.other, Item),
+	notice(S, "~p offering ~p", [Item]),
+	{next_state, negotiate, S#state{ownItems=add(Item, OwnItems)}};
+
+%% Own side retracting an item offer
+negotiate({retract_offer, Item}, S=#state{ownItems=OwnItems}) ->
+	undo_offer(S#state.other, Item) ->
+	notice(S, "~p retracting ~p", [Item]),
+	{next_state, negotiate, S#state{ownItems=remove(Item, OwnItems)}};
+
+%% Other side offering an item
+negotiate({do_offer, Item}, S=#state{otherItems=OtherItems}) ->
+	notice(S, "~p other player is offering ~p", [Item]),
+	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}};
+
+%% Other side offering an item
+negotiate({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
+	notice(S, "~p other player is retracting ~p", [Item]),
+	{next_state, negotiate, S#state{otherItems=remove(Item, OtherItems)}};
+
+%% are_you_ready message asking if we are ready to accept the offer. If we are on negotiate state we refuse
+negotiate(are_you_ready, S=#state{other=OtherPid}) ->
+	io:format("Other user ready to trade. ~n"),
+	notice(S, "Other user ready to transfer goods: ~n
+		You get ~p, and the other side gets ~p", [S#state.ownItems, S#state.otherItems]),
+	not_yet(OtherPid),
+	{next_state, negotiate, S};
+
+%% handle unexpected messages
+negotiate(Event, Data) ->
+	unexpected(Event, negotiate),
+	{next_state, negotiate, Data}.
+
+%% Our client is ready
+negotiate(ready, From, S=#state{other=OtherPid}) ->
+	are_you_ready(OtherPid),
+	notice(S, "asking if ready, waiting", []),
+	{next_state, wait, S#state{from=From}};
+
+%% Unexpected messages
+negotiate(Event, _From, S) ->
+	negotiate(Event, S).
