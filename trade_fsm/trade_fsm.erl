@@ -214,3 +214,45 @@ negotiate(ready, From, S=#state{other=OtherPid}) ->
 %% Unexpected messages
 negotiate(Event, _From, S) ->
 	negotiate(Event, S).
+
+%% WAIT STATE
+
+%% Other user keeps negotiating, offering new items
+wait({do_offer, Item}, S=#state{otherItems=OtherItems}) ->
+	gen_fsm:reply(S#state.from, offer_changed),
+	notice(S, "~p other player is offering ~p", [Item]),
+	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}},
+
+%% Other user keeps negotiating, retracting new items
+wait({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
+	gen_fsm:reply(S#state.from, offer_changed),
+	notice(S, "~p other player is retracting ~p", [Item]),
+	{next_state, negotiate, S#state{otherItems=remove(Item, OtherItems)}};
+
+%% The other ask if we are ready when we are already waiting
+wait(are_you_ready, S=#state{other=OtherPid}) ->
+	am_ready(S#state.other),
+	notice(S, "asked for ready and I am. Confirming again", []),
+	{next_state, wait, S};
+
+%% Other player is not ready
+wait(not_yet, S#state{}) -> %% FIXME
+	notice(S, " other not ready yet", []),
+	{next_state, negotiate, S};
+
+%% We send we are ready again and move to ready state
+wait('ready!', S#state{}) ->
+	am_ready(S#state.other),
+	ack_trans(S#state.other),
+	gen_fsm:reply(S#state.from, ok),
+	notice(S, " other is also ready", []),
+	{next_state, ready, S};
+
+%% Fuck these!
+wait(Event, Data) ->
+	unexpected(Event, wait),
+	{next_state. wait, Data}.
+
+
+
+
