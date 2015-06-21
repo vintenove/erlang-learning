@@ -5,6 +5,18 @@
 -export([start/1, start_link/1, trade/2, accept_trade/1,
  make_offer/2, retract_offer/2, ready/1, cancel/1]).
 
+-export([init/1, handle_event/3, handle_sync_event/4,
+	handle_info/3, terminate/3, code_change/4,
+	idle/2, idle/3, idle_wait/2, idle_wait/3, negotiate/2, negotiate/3, wait/2,
+	ready/2, ready/3]).
+
+-record(state, {name="",
+    other,
+    ownItems=[],
+    otherItems=[],
+    monitor,
+    from}).
+
  %%% Public API
  start(Name) ->
  	gen_fsm:start(?MODULE, [Name], []).
@@ -85,17 +97,6 @@ notifify_cancel(OtherPid) ->
 
 
 %% GEN_FSM CALLBACKS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--export([init/1, handle_event/3, handle_sync_event/4,
-	handle_info/3, terminate/3, code_change/4,
-	idle/2, idle/3, idle_wait/3, negotiate/2, negotiate/3, wait/2,
-	ready/2, ready/3]).
-
--record(state, {name="",
-    other,
-    ownItems=[],
-    otherItems=[],
-    monitor,
-    from}).
 
 init(Name) ->
 	{ok, idle, #state{name=Name}}.
@@ -117,6 +118,15 @@ add(Item, L) ->
 remove(Item, L) ->
 	L -- [Item].
 
+priority(OwnPid, OtherPid) when OwnPid > OtherPid -> true;
+priority(OwnPid, OtherPid) when OwnPid < OtherPid -> false.
+
+commit(S=#state{}) ->
+	io:format("Transaction completed for ~s"
+		"Items sent are: ~n~p, ~n and received are: ~n~p.~n"
+		"This operation should have some atomic save"
+		"in a database. ~n", [S#state.name, S#state.ownItems, S#state.otherItems]).
+
 %% IDLE STATE
 
 %% Asynchronous idle callbacks. This callback has to do with the other FSM
@@ -128,10 +138,10 @@ idle({ask_negotiate, OtherPid}, S=#state{}) ->
 
 idle(Event, Data) ->
 	unexpected(Event, idle),
-	{next_state, idle, data}.
+	{next_state, idle, Data}.
 
 %% idle synchonous callbacks
-idle(ask_negotiate, OtherPid}, From, S#state={}) ->
+idle({ask_negotiate, OtherPid}, From, S=#state{}) ->
 	ask_negotiate(OtherPid, self()),
 	notice(S, "asking user ˜ p for a trade", [OtherPid]),
 	Ref = monitor(process, OtherPid),
@@ -149,7 +159,7 @@ idle_wait({ask_negotiate, OtherPid}, S=#state{other=OtherPid}) ->
 	{next_state, negotiate, S};
 
 %% The other FMS accepted our offer and we move to negotiate state
-idle_wait({accept_negotiate, OtherPid}, OtherPid, S#state(other=OtherPid)) ->
+idle_wait({accept_negotiate, OtherPid}, S=#state{other=OtherPid}) ->
 	gen_fsm:reply(S#state.from, ok),
 	notice(S, "starting negotiation", []),
 	{next_state, negotiate, S};
@@ -159,7 +169,7 @@ idle_wait(Event, Data) ->
 	{next_state, idle_wait, Data}.
 
 %% Client can accept or dismiss trade
-idle_wait(accept_negotiate, _From, S#state(other=OtherPid)) ->
+idle_wait(accept_negotiate, _From, S=#state{other=OtherPid}) ->
 	accept_negotiate(OtherPid, self()),
 	notice(S, "accepting negotiation", []),
 	{reply, ok, negotiate, S};
@@ -178,7 +188,7 @@ negotiate({make_offer, Item}, S=#state{ownItems=OwnItems}) ->
 
 %% Own side retracting an item offer
 negotiate({retract_offer, Item}, S=#state{ownItems=OwnItems}) ->
-	undo_offer(S#state.other, Item) ->
+	undo_offer(S#state.other, Item),
 	notice(S, "~p retracting ~p", [Item]),
 	{next_state, negotiate, S#state{ownItems=remove(Item, OwnItems)}};
 
@@ -221,7 +231,7 @@ negotiate(Event, _From, S) ->
 wait({do_offer, Item}, S=#state{otherItems=OtherItems}) ->
 	gen_fsm:reply(S#state.from, offer_changed),
 	notice(S, "~p other player is offering ~p", [Item]),
-	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}},
+	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}};
 
 %% Other user keeps negotiating, retracting new items
 wait({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
@@ -230,18 +240,18 @@ wait({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
 	{next_state, negotiate, S#state{otherItems=remove(Item, OtherItems)}};
 
 %% The other ask if we are ready when we are already waiting
-wait(are_you_ready, S=#state{other=OtherPid}) ->
+wait(are_you_ready, S=#state{}) ->
 	am_ready(S#state.other),
 	notice(S, "asked for ready and I am. Confirming again", []),
 	{next_state, wait, S};
 
 %% Other player is not ready
-wait(not_yet, S#state{}) -> %% FIXME
+wait(not_yet, S=#state{}) -> %% FIXME
 	notice(S, " other not ready yet", []),
 	{next_state, negotiate, S};
 
 %% We send we are ready again and move to ready state
-wait('ready!', S#state{}) ->
+wait('ready!', S=#state{}) ->
 	am_ready(S#state.other),
 	ack_trans(S#state.other),
 	gen_fsm:reply(S#state.from, ok),
@@ -251,8 +261,79 @@ wait('ready!', S#state{}) ->
 %% Fuck these!
 wait(Event, Data) ->
 	unexpected(Event, wait),
-	{next_state. wait, Data}.
+	{next_state, wait, Data}.
 
+%% READY STATE
+ready(ack, S=#state{}) ->
+	case priority(self(), S#state.other) of
+		true ->
+			try
+				notice(S, " asking for commit", []),
+				ready_commit = ask_commit(S#state.other),
+				notice(S, "ordering commit ", []),
+				ok = do_commit(S#state.other),
+				commit(S),
+				{stop, normal, S}
+			catch Class:Reason ->
+				%% Abort! Either ready_commit or do_commit failed
+				notice(S, "commit failed", []),
+				{stop, {Class,Reason}, S}
+			end;
+		false ->
+			{next_state, ready, S}
+	end;
 
+ready(Event, Data) ->
+	unexpected(Event, ready),
+	{next_state, ready, Data}.
 
+ready(ask_commit, _From, S) ->
+	notice(S, "replying to ask_commit", []),
+	{reply, ready_commit, ready, S};
 
+ready(do_commit, _From, S) ->
+	notice(S, "commiting", []),
+	commit(S),
+	{stop, normal, ok, S};
+
+ready(Event, _From, Data) ->
+	ready(Event, Data).
+
+%% CANCEL TRADE EVENT
+
+%% Asynchronous other FSM cancel message
+handle_event(cancel, _StateName, S=#state{}) ->
+	notice(S, "received a cancel event", []),
+	{stop, other_cancelled, S};
+
+handle_event(Event, StateName, Data) ->
+	unexpected(Event, StateName),
+	{next_state, StateName, Data}.
+
+%% Synchronous client cancel order
+handle_sync_event(cancel, _From, _StateName, S=#state{}) ->
+	notifify_cancel(S#state.other),
+	notice(S, "cancelling trade with other player", []),
+	{stop, cancelled, S};
+
+handle_sync_event(Event, _From, StateName, Data) ->
+	handle_event(Event, StateName, Data).
+
+%% Other FSM goes down event
+handle_info({'DOWN', Ref, process, Pid, Reason}, _, S=#state{other=Pid, monitor=Ref}) ->
+	notice(S, "other FSM is dead", []),
+	{stop, {other_down, Reason}, S};
+
+handle_info(Event, StateName, Data) ->
+	handle_event(Event, StateName, Data).
+
+%% CODE CHANGE
+code_change(_OldVsn, StateName, Data, _Extra) ->
+	{ok, StateName, Data}.
+
+%% Transaction completed
+terminate(normal, ready, S=#state{}) ->
+	notice(S, "FSM leaving", []);
+
+terminate(_Reason, _StateName, _StateData) ->
+		ok.
