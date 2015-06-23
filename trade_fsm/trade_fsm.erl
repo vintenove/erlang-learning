@@ -47,7 +47,7 @@ ready(OwnPid) ->
 
 %% Cancel the transaction
 cancel(OwnPid) ->
-	gen_fsm:sync_send_event(OwnPid, cancel).
+	gen_fsm:sync_send_all_state_event(OwnPid, cancel).
 
 %%%%%%%%  FSM TO FSM %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -85,7 +85,7 @@ ack_trans(OtherPid) ->
 
 %% Ask if ready to commit
 ask_commit(OtherPid) ->
-	gen_fsm:send_event(OtherPid, ask_commit).
+	gen_fsm:sync_send_event(OtherPid, ask_commit).
 
 %% Begin synchronous commit
 do_commit(OtherPid) ->
@@ -109,7 +109,7 @@ notice(#state{name=N}, Str, Args) ->
 
 %% Allows to log unexpected messages
 unexpected(Msg, State) ->
-	io:format("~p received an unexpected message while in state ~p~n", [self(), Msg, State]).
+	io:format("~p received an unexpected message ~p while in state ~p~n", [self(), Msg, State]).
 
 %% Adds item to an item list
 add(Item, L) ->
@@ -141,9 +141,9 @@ idle(Event, Data) ->
 	{next_state, idle, Data}.
 
 %% idle synchonous callbacks
-idle({ask_negotiate, OtherPid}, From, S=#state{}) ->
+idle({negotiate, OtherPid}, From, S=#state{}) ->
 	ask_negotiate(OtherPid, self()),
-	notice(S, "asking user ˜ p for a trade", [OtherPid]),
+	notice(S, "asking user ~p for a trade", [OtherPid]),
 	Ref = monitor(process, OtherPid),
 	{next_state, idle_wait, S#state{other=OtherPid, from=From, monitor=Ref}};
 
@@ -183,30 +183,30 @@ idle_wait(Event, _From, Data) ->
 %% Own side offering items
 negotiate({make_offer, Item}, S=#state{ownItems=OwnItems}) ->
 	do_offer(S#state.other, Item),
-	notice(S, "~p offering ~p", [Item]),
+	notice(S, "offering ~p", [Item]),
 	{next_state, negotiate, S#state{ownItems=add(Item, OwnItems)}};
 
 %% Own side retracting an item offer
 negotiate({retract_offer, Item}, S=#state{ownItems=OwnItems}) ->
 	undo_offer(S#state.other, Item),
-	notice(S, "~p retracting ~p", [Item]),
+	notice(S, "retracting ~p", [Item]),
 	{next_state, negotiate, S#state{ownItems=remove(Item, OwnItems)}};
 
 %% Other side offering an item
 negotiate({do_offer, Item}, S=#state{otherItems=OtherItems}) ->
-	notice(S, "~p other player is offering ~p", [Item]),
+	notice(S, "other player is offering ~p", [Item]),
 	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}};
 
 %% Other side offering an item
 negotiate({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
-	notice(S, "~p other player is retracting ~p", [Item]),
+	notice(S, "other player is retracting ~p", [Item]),
 	{next_state, negotiate, S#state{otherItems=remove(Item, OtherItems)}};
 
 %% are_you_ready message asking if we are ready to accept the offer. If we are on negotiate state we refuse
 negotiate(are_you_ready, S=#state{other=OtherPid}) ->
 	io:format("Other user ready to trade. ~n"),
 	notice(S, "Other user ready to transfer goods: ~n
-		You get ~p, and the other side gets ~p", [S#state.ownItems, S#state.otherItems]),
+		You get ~p, and the other side gets ~p", [S#state.otherItems, S#state.ownItems]),
 	not_yet(OtherPid),
 	{next_state, negotiate, S};
 
@@ -230,13 +230,13 @@ negotiate(Event, _From, S) ->
 %% Other user keeps negotiating, offering new items
 wait({do_offer, Item}, S=#state{otherItems=OtherItems}) ->
 	gen_fsm:reply(S#state.from, offer_changed),
-	notice(S, "~p other player is offering ~p", [Item]),
+	notice(S, "other player is offering ~p", [Item]),
 	{next_state, negotiate, S#state{otherItems=add(Item, OtherItems)}};
 
 %% Other user keeps negotiating, retracting new items
 wait({undo_offer, Item}, S=#state{otherItems=OtherItems}) ->
 	gen_fsm:reply(S#state.from, offer_changed),
-	notice(S, "~p other player is retracting ~p", [Item]),
+	notice(S, "other player is retracting ~p", [Item]),
 	{next_state, negotiate, S#state{otherItems=remove(Item, OtherItems)}};
 
 %% The other ask if we are ready when we are already waiting
@@ -248,7 +248,7 @@ wait(are_you_ready, S=#state{}) ->
 %% Other player is not ready
 wait(not_yet, S=#state{}) -> %% FIXME
 	notice(S, " other not ready yet", []),
-	{next_state, negotiate, S};
+	{next_state, wait, S};
 
 %% We send we are ready again and move to ready state
 wait('ready!', S=#state{}) ->
