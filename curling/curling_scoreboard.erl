@@ -26,3 +26,9 @@ handle_call(_, State) ->
 
 handle_info(_, State) ->
 	{ok, State}.
+
+code_change(_OldSvn, State, _Extra) ->
+	{ok, State}.
+
+terminate(_Reason, _State) ->
+	ok.
