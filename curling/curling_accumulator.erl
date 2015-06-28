@@ -22,7 +22,7 @@ handle_event(_, S=#state{}) ->
 	{ok, S}.
 
 handle_call(game_data, S=#state{teams=T, round=R}) ->
-	{ok, {orddict:to_list(T)}, {round, R}, S};
+	{ok, {orddict:to_list(T), {round, R}}, S};
 
 handle_call(_, State) ->
 	{ok, ok, State}.
