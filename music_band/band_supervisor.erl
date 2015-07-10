@@ -28,7 +28,7 @@ init({RestartStrategy, MaxRestart, MaxTime}) ->
 		{musicians, start_link, [bass, good]},
 		temporary, 1000, worker, [musicians]},
 	 {drum,
-		{musicians, start_link, [drum, good]},
+		{musicians, start_link, [drum, bad]},
 		transient, 1000, worker, [musicians]},
 	 {keytar,
 		{musicians, start_link, [keytar, good]},
