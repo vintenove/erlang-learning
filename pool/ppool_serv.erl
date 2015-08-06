@@ -76,7 +76,7 @@ handle_call({sync, Args}, _From, S = #state{limit=N, sup=Sup, refs=R}) when N > 
 handle_call({sync, Args}, From, S#state{queue=Q}) -> % w/o when clause, unlike eg
 	{noreply, noalloc, S#state{queue=queue:in({From, Args}, Q)}};
 
-handle_call({stop, _From, State}) ->
+handle_call(stop, _From, State) ->
 	{stop, normal, ok, State};
 
 handle_call(_Message, _From, State) ->
@@ -93,3 +93,25 @@ handle_cast({async, Args}, S = #state{queue=Q}) ->
 handle_cast(_Message, State) ->
 	{noreply, State}.
 
+handle_down_worker(Ref, S = #state{limit=L, sup=S, refs=Refs}) ->
+	case queue:out(S#state.queue) of
+		{{value, {From, Args}}, Q} ->
+			{ok, Pid} = supervisor:start_child(S, Args),
+			NewRef = erlang:monitor(process, Pid),
+			NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref, Refs),
+			gen_server:reply(From, {ok, Pid}),
+			{noreply, S#state{refs=NewRefs, queue=Q}};
+		{{value, Args}, Q}} ->
+			{ok, Pid} = supervisor:start_child(S, Args),
+			NewRef = erlang:monitor(process, Pid),
+			NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref, Refs),
+			{noreply, S#state{refs=NewRefs, queue=Q}};
+		{empty, _} ->
+			{noreply, S#state{limit=L+1, refs=gb_sets:delete(Ref, Refs)}}
+	end.
+
+code_change(_OldVsn, State, _Extra) ->
+	{ok, State}.
+
+terminate(_Reason, _State) ->
+	ok.
