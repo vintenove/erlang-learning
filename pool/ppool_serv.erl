@@ -54,7 +54,7 @@ handle_info({'DOWN', Ref, process, _Pid, _},
 
 handle_info({start_worker_supervisor, Sup, MFA}, S = #state{}) ->
 	{ok, Pid} = supervisor:start_child(Sup, ?SPEC(MFA)),
-	{ok, S#state{sup=Pid}};
+	{noreply, S#state{sup=Pid}};
 
 handle_info(Message, State) ->
 	io:format("Unkown message in server: ~p", [Message]),
@@ -63,7 +63,7 @@ handle_info(Message, State) ->
 handle_call({run, Args}, _From, S = #state{limit=N, sup=Sup, refs=R}) when N > 0 ->
 	{ok, Pid} = supervisor:start_child(Sup, Args),
 	Ref = erlang:monitor(process, Pid),
-	{reply, {ok,Pid}, S#state{limit=N-1, refs=gb_sets:add(R,Ref)}};
+	{reply, {ok,Pid}, S#state{limit=N-1, refs=gb_sets:add(Ref, R)}};
 
 handle_call({run, _Args}, _From, S) -> % w/o when clause, unlike eg
 	{reply, noalloc, S};
