@@ -26,6 +26,6 @@ start_pool(Name, Limit, MFA) ->
 	supervisor:start_child(ppool, ChildSpec).
 
 stop_pool(Name) ->
-	supervisor:terminate_child(ppool, Name),
-	supervisor:delete_child(ppool, Name).
+	supervisor:terminate_child(ppool_sup, Name),
+	supervisor:delete_child(ppool_sup, Name).
 

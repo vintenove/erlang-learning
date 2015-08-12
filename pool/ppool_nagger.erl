@@ -27,7 +27,7 @@ handle_info(timeout, {Task, Delay, Max, SentTo}) ->
 	if Max =:= infinity ->
 		{noreply, {Task, Delay, Max, SentTo}, Delay};
 	   Max =< 1 ->
-	    {stop, normal, ok, {Task, Delay, 0, SentTo}};
+	    {stop, normal, {Task, Delay, 0, SentTo}};
 	    Max > 1 ->
 	    {noreply, {Task, Delay, Max-1, SentTo}, Delay}
 	end.

@@ -5,6 +5,8 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
 
+-export([handle_down_worker/2]).
+
 -define(SPEC(MFA),
 	{worker_sup,
 	{ppool_worker_sup, start_link, [MFA]},
@@ -43,9 +45,9 @@ init({Limit, MFA, Sup}) ->
 	{ok, #state{limit=Limit, refs=gb_sets:empty()}}.
 
 handle_info({'DOWN', Ref, process, _Pid, _},
-	S = #state{limit=_L, refs=R, sup=_Sup}) ->
+	S = #state{refs=R}) ->
 	io:format("received down message"),
-	case gb_sets:is_element(R) of
+	case gb_sets:is_element(Ref, R) of
 		true ->
 			handle_down_worker(Ref, S);
 		false ->
@@ -71,7 +73,7 @@ handle_call({run, _Args}, _From, S) -> % w/o when clause, unlike eg
 handle_call({sync, Args}, _From, S = #state{limit=N, sup=Sup, refs=R}) when N > 0 ->
 	{ok, Pid} = supervisor:start_child(Sup, Args),
 	Ref = erlang:monitor(process, Pid),
-	{reply, {ok,Pid}, S#state{limit=N-1, refs=gb_sets:add(R,Ref)}};
+	{reply, {ok,Pid}, S#state{limit=N-1, refs=gb_sets:add(Ref,R)}};
 
 handle_call({sync, Args}, From, S = #state{queue=Q}) ->
 	{noreply, S#state{queue=queue:in({From, Args}, Q)}};
@@ -85,7 +87,7 @@ handle_call(_Message, _From, State) ->
 handle_cast({async, Args}, S = #state{limit=N, sup=Sup, refs=R}) when N > 0 ->
 	{ok, Pid} = supervisor:start_child(Sup, Args),
 	Ref = erlang:monitor(process, Pid),
-	{noreply, S#state{limit=N-1, refs=gb_sets:add(R,Ref)}};
+	{noreply, S#state{limit=N-1, refs=gb_sets:add(Ref, R)}};
 
 handle_cast({async, Args}, S = #state{queue=Q}) ->
 	{noreply, S#state{queue=queue:in(Args, Q)}};
@@ -93,16 +95,16 @@ handle_cast({async, Args}, S = #state{queue=Q}) ->
 handle_cast(_Message, State) ->
 	{noreply, State}.
 
-handle_down_worker(Ref, S = #state{limit=L, sup=S, refs=Refs}) ->
+handle_down_worker(Ref, S = #state{limit=L, sup=Sup, refs=Refs}) ->
 	case queue:out(S#state.queue) of
 		{{value, {From, Args}}, Q} ->
-			{ok, Pid} = supervisor:start_child(S, Args),
+			{ok, Pid} = supervisor:start_child(Sup, Args),
 			NewRef = erlang:monitor(process, Pid),
 			NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref, Refs)),
 			gen_server:reply(From, {ok, Pid}),
 			{noreply, S#state{refs=NewRefs, queue=Q}};
 		{{value, Args}, Q} ->
-			{ok, Pid} = supervisor:start_child(S, Args),
+			{ok, Pid} = supervisor:start_child(Sup, Args),
 			NewRef = erlang:monitor(process, Pid),
 			NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref, Refs)),
 			{noreply, S#state{refs=NewRefs, queue=Q}};
